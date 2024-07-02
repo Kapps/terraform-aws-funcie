@@ -1,5 +1,5 @@
-data "aws_ssm_parameter" "ecs_al2023_arm64_ami" {
-  name = "/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id"
+data "aws_ssm_parameter" "al2023_ami" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
 resource "aws_ecs_cluster" "funcie_cluster" {
@@ -14,7 +14,7 @@ data "aws_ip_ranges" "ec2_instance_connect" {
 resource "aws_security_group" "ec2_instance_connect" {
   name        = "ec2-instance-connect"
   description = "Security group for EC2 Instance Connect"
-  vpc_id      = var.vpc_id
+  vpc_id      = local.vpc_id
 
   dynamic "ingress" {
     for_each = data.aws_ip_ranges.ec2_instance_connect.cidr_blocks
@@ -34,21 +34,44 @@ resource "aws_security_group" "ec2_instance_connect" {
   }
 }
 
+resource "aws_security_group" "nat_instance_sg" {
+  name        = "nat-instance-sg"
+  description = "Security group for the NAT instance"
+  vpc_id      = local.vpc_id
+
+  ingress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = [local.vpc_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 resource "aws_launch_template" "bastion_launch_template" {
   name = "bastion-launch-template"
 
-  image_id      = data.aws_ssm_parameter.ecs_al2023_arm64_ami.value
-  instance_type = "t3.micro"
+  image_id      = data.aws_ssm_parameter.al2023_ami.value
+  instance_type = var.bastion_instance_type
 
   iam_instance_profile {
     name = aws_iam_instance_profile.instance_profile.name
   }
 
   network_interfaces {
-    associate_public_ip_address = true # Even though we have an EIP, we still need this to be able to use the CLI to associate it
-    security_groups             = [aws_security_group.server_bastion_sg.id, aws_security_group.ec2_instance_connect.id]
+    associate_public_ip_address = true
+    security_groups = concat(
+      [aws_security_group.server_bastion_sg.id, aws_security_group.ec2_instance_connect.id],
+      var.vpc_id == "" ? [aws_security_group.nat_instance_sg.id] : []
+    )
 
-    subnet_id = var.public_subnet_ids[0]
+    subnet_id = local.public_subnet_ids[0]
   }
 
   metadata_options {
@@ -58,9 +81,11 @@ resource "aws_launch_template" "bastion_launch_template" {
   }
 
   user_data = base64encode(templatefile("${path.module}/userdata.sh", {
-    ECS_CLUSTER = aws_ecs_cluster.funcie_cluster.name
-    REGION      = var.region
-    FUNCIE_ENV  = var.funcie_env
+    ECS_CLUSTER    = aws_ecs_cluster.funcie_cluster.name
+    REGION         = var.region
+    FUNCIE_ENV     = var.funcie_env
+    ROUTE_TABLE_ID = var.vpc_id == "" ? aws_route_table.funcie_nat_route_table[0].id : ""
+    CREATE_VPC     = var.vpc_id == "" ? "true" : ""
   }))
 
   tag_specifications {
@@ -83,7 +108,7 @@ resource "aws_autoscaling_group" "bastion_asg" {
     version = "$Latest"
   }
 
-  vpc_zone_identifier = var.public_subnet_ids
+  vpc_zone_identifier = local.public_subnet_ids
 
   tag {
     key                 = "Name"
@@ -119,6 +144,7 @@ resource "aws_iam_role_policy" "instance_policy" {
       {
         Effect = "Allow",
         Action = [
+          // ECS-related permissions to allow the instance to register with the cluster and run tasks / send logs
           "ecs:RegisterContainerInstance",
           "ecs:DeregisterContainerInstance",
           "ecs:DiscoverPollEndpoint",
@@ -130,12 +156,20 @@ resource "aws_iam_role_policy" "instance_policy" {
           "ecs:Poll",
           "ecs:StartTelemetrySession",
           "ecs:UpdateContainerInstancesState",
+
           "logs:CreateLogStream",
           "logs:PutLogEvents",
+          # EC2 permissions to allow the instance to manage its own EIP
           "ec2:AssociateAddress",
           "ec2:DisassociateAddress",
           "ec2:DescribeAddresses",
           "ec2:DescribeInstances",
+          # EC2 permissions to allow the instance to update the route table to register itself as the NAT instance
+          "ec2:CreateRoute",
+          "ec2:DeleteRoute",
+          "ec2:DescribeRouteTables",
+          "ec2:ReplaceRoute",
+          "ec2:ModifyInstanceAttribute",
         ],
         Resource = "*"
       },
@@ -166,9 +200,11 @@ resource "null_resource" "asg_update_trigger" {
   triggers = {
     launch_template_version = aws_launch_template.bastion_launch_template.latest_version
     user_data = base64encode(templatefile("${path.module}/userdata.sh", {
-      ECS_CLUSTER = aws_ecs_cluster.funcie_cluster.name
-      REGION      = var.region
-      FUNCIE_ENV  = var.funcie_env
+      ECS_CLUSTER    = aws_ecs_cluster.funcie_cluster.name
+      REGION         = var.region
+      FUNCIE_ENV     = var.funcie_env
+      ROUTE_TABLE_ID = var.vpc_id == "" ? aws_route_table.funcie_nat_route_table[0].id : ""
+      CREATE_VPC     = var.vpc_id == ""
     }))
     instance_policy = aws_iam_role_policy.instance_policy.policy
   }

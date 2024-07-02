@@ -1,7 +1,7 @@
 
 resource "aws_ecs_task_definition" "server_bastion_task" {
   family                   = "funcie-server-bastion"
-  network_mode             = "awsvpc"
+  network_mode             = "bridge"
   requires_compatibilities = ["EC2"]
   cpu                      = "256"
   memory                   = "512"
@@ -13,6 +13,7 @@ resource "aws_ecs_task_definition" "server_bastion_task" {
       "name": "server-bastion-container",
       "image": "public.ecr.aws/w1h1o7p8/funcie-server-bastion:v${local.version}",
       "essential": true,
+
       "portMappings": [
         {
           "containerPort": 8082,
@@ -47,13 +48,13 @@ resource "aws_cloudwatch_log_group" "funcie_server_bastion_lg" {
 resource "aws_security_group" "server_bastion_sg" {
   name        = "funcie-server-bastion-sg"
   description = "funcie-server-bastion-sg"
-  vpc_id      = var.vpc_id
+  vpc_id      = local.vpc_id
 
   ingress {
     from_port   = 8082
     to_port     = 8082
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/8"]
+    cidr_blocks = [local.vpc_cidr]
   }
 
   egress {
@@ -70,17 +71,6 @@ resource "aws_ecs_service" "server_bastion_service" {
   task_definition = aws_ecs_task_definition.server_bastion_task.arn
   desired_count   = 1
   launch_type     = "EC2"
-
-  service_registries {
-    registry_arn   = aws_service_discovery_service.server_bastion.arn
-    container_name = "server-bastion-container"
-  }
-
-  network_configuration {
-    assign_public_ip = false
-    security_groups  = [aws_security_group.server_bastion_sg.id]
-    subnets          = var.private_subnet_ids
-  }
 }
 
 resource "aws_iam_role" "ecs_execution_role" {

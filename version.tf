@@ -1,5 +1,5 @@
 data "local_file" "version" {
-  filename = "${path.module}/VERSION"
+  filename = "${path.module}/../VERSION"
 }
 
 locals {
