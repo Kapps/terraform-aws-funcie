@@ -68,7 +68,7 @@ resource "aws_launch_template" "bastion_launch_template" {
     associate_public_ip_address = true
     security_groups = concat(
       [aws_security_group.server_bastion_sg.id, aws_security_group.ec2_instance_connect.id],
-      locals.create_vpc ? [aws_security_group.nat_instance_sg.id] : []
+      local.create_vpc ? [aws_security_group.nat_instance_sg.id] : []
     )
 
     subnet_id = local.public_subnet_ids[0]
@@ -84,8 +84,8 @@ resource "aws_launch_template" "bastion_launch_template" {
     ECS_CLUSTER    = aws_ecs_cluster.funcie_cluster.name
     REGION         = var.region
     FUNCIE_ENV     = var.funcie_env
-    ROUTE_TABLE_ID = locals.create_vpc ? aws_route_table.funcie_nat_route_table[0].id : ""
-    CREATE_VPC     = locals.create_vpc ? "true" : ""
+    ROUTE_TABLE_ID = local.create_vpc ? aws_route_table.funcie_nat_route_table[0].id : ""
+    CREATE_VPC     = local.create_vpc ? "true" : ""
   }))
 
   tag_specifications {
@@ -203,8 +203,8 @@ resource "null_resource" "asg_update_trigger" {
       ECS_CLUSTER    = aws_ecs_cluster.funcie_cluster.name
       REGION         = var.region
       FUNCIE_ENV     = var.funcie_env
-      ROUTE_TABLE_ID = locals.create_vpc ? aws_route_table.funcie_nat_route_table[0].id : ""
-      CREATE_VPC     = locals.create_vpc
+      ROUTE_TABLE_ID = local.create_vpc ? aws_route_table.funcie_nat_route_table[0].id : ""
+      CREATE_VPC     = local.create_vpc
     }))
     instance_policy = aws_iam_role_policy.instance_policy.policy
   }
