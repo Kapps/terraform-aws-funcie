@@ -6,8 +6,9 @@ locals {
   private_subnet_cidrs = var.vpc_id != "" ? var.private_subnet_cidrs : aws_subnet.funcie_private_subnets[*].cidr_block
   private_subnet_ids   = var.vpc_id != "" ? var.private_subnet_ids : aws_subnet.funcie_private_subnets[*].id
 
-  vpc_id   = var.vpc_id != "" ? var.vpc_id : aws_vpc.funcie_vpc[0].id
-  vpc_cidr = data.aws_vpc.funcie_vpc.cidr_block
+  vpc_id     = var.vpc_id != "" ? var.vpc_id : aws_vpc.funcie_vpc[0].id
+  vpc_cidr   = data.aws_vpc.funcie_vpc.cidr_block
+  create_vpc = var.vpc_id == ""
 }
 
 data "aws_vpc" "funcie_vpc" {
@@ -15,7 +16,7 @@ data "aws_vpc" "funcie_vpc" {
 }
 
 resource "aws_vpc" "funcie_vpc" {
-  count      = var.vpc_id == "" ? 1 : 0
+  count      = locals.create_vpc ? 1 : 0
   cidr_block = var.vpc_cidr
 
   enable_dns_hostnames = true
@@ -27,7 +28,7 @@ resource "aws_vpc" "funcie_vpc" {
 }
 
 resource "aws_subnet" "funcie_public_subnets" {
-  count                   = var.vpc_id == "" ? length(var.public_subnet_cidrs) : 0
+  count                   = locals.create_vpc ? length(var.public_subnet_cidrs) : 0
   vpc_id                  = aws_vpc.funcie_vpc[0].id
   cidr_block              = var.public_subnet_cidrs[count.index]
   map_public_ip_on_launch = true
@@ -38,7 +39,7 @@ resource "aws_subnet" "funcie_public_subnets" {
 }
 
 resource "aws_subnet" "funcie_private_subnets" {
-  count                   = var.vpc_id == "" ? length(var.private_subnet_cidrs) : 0
+  count                   = locals.create_vpc ? length(var.private_subnet_cidrs) : 0
   vpc_id                  = aws_vpc.funcie_vpc[0].id
   cidr_block              = var.private_subnet_cidrs[count.index]
   map_public_ip_on_launch = false
@@ -49,7 +50,7 @@ resource "aws_subnet" "funcie_private_subnets" {
 }
 
 resource "aws_internet_gateway" "funcie_igw" {
-  count  = var.vpc_id == "" ? 1 : 0
+  count  = locals.create_vpc ? 1 : 0
   vpc_id = aws_vpc.funcie_vpc[0].id
 
   tags = {
@@ -58,7 +59,7 @@ resource "aws_internet_gateway" "funcie_igw" {
 }
 
 resource "aws_route_table" "funcie_igw_route_table" {
-  count  = var.vpc_id == "" ? 1 : 0
+  count  = locals.create_vpc ? 1 : 0
   vpc_id = aws_vpc.funcie_vpc[0].id
 
   route {
@@ -72,7 +73,7 @@ resource "aws_route_table" "funcie_igw_route_table" {
 }
 
 resource "aws_route_table" "funcie_nat_route_table" {
-  count  = var.vpc_id == "" ? 1 : 0
+  count  = locals.create_vpc ? 1 : 0
   vpc_id = aws_vpc.funcie_vpc[0].id
 
   // The route here is created by the userdata script in the ASG.
@@ -84,19 +85,19 @@ resource "aws_route_table" "funcie_nat_route_table" {
 }
 
 resource "aws_route_table_association" "funcie_public_subnet_associations" {
-  count          = var.vpc_id == "" ? length(var.public_subnet_cidrs) : 0
+  count          = locals.create_vpc ? length(var.public_subnet_cidrs) : 0
   subnet_id      = aws_subnet.funcie_public_subnets[count.index].id
   route_table_id = aws_route_table.funcie_igw_route_table[0].id
 }
 
 resource "aws_route_table_association" "funcie_private_subnet_associations" {
-  count          = var.vpc_id == "" ? length(var.private_subnet_cidrs) : 0
+  count          = locals.create_vpc ? length(var.private_subnet_cidrs) : 0
   subnet_id      = aws_subnet.funcie_private_subnets[count.index].id
   route_table_id = aws_route_table.funcie_nat_route_table[0].id
 }
 
 output "vpc_id" {
-  value = var.vpc_id == "" ? aws_vpc.funcie_vpc[0].id : var.vpc_id
+  value = locals.create_vpc ? aws_vpc.funcie_vpc[0].id : var.vpc_id
 }
 
 output "public_subnet_ids" {
